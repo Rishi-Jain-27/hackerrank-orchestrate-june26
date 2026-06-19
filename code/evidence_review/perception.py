@@ -223,6 +223,16 @@ class PerceptionClient:
         self.examples = examples or []
         self.retry_delay = retry_delay
         self.settings.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Run-level instrumentation for the P6 operational report. Tokens are
+        # only observed on real API calls; cache hits cost nothing to re-run.
+        self.stats = {
+            "claims": 0,
+            "images": 0,
+            "api_calls": 0,
+            "cache_hits": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
 
     @property
     def client(self):
@@ -251,9 +261,13 @@ class PerceptionClient:
                 )
             )
 
+        self.stats["claims"] += 1
+        self.stats["images"] += len(images)
+
         key = cache_key(claim_row, raw_bytes, self.settings.model)
         cache_path = self._cache_path(key)
         if cache_path.exists():
+            self.stats["cache_hits"] += 1
             return json.loads(cache_path.read_text(encoding="utf-8"))
 
         result = self._call_model(build_system(self.examples), build_user_content(claim_row, images))
@@ -276,6 +290,13 @@ class PerceptionClient:
                 text = next(
                     b.text for b in resp.content if getattr(b, "type", None) == "text"
                 )
+                self.stats["api_calls"] += 1
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    self.stats["input_tokens"] += getattr(usage, "input_tokens", 0) or 0
+                    self.stats["output_tokens"] += (
+                        getattr(usage, "output_tokens", 0) or 0
+                    )
                 return json.loads(text)
             except Exception as e:  # transient API/parse errors -> retry
                 last_exc = e

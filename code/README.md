@@ -33,7 +33,7 @@ writes structured predictions to `output.csv`.
 | P2 | Allowed-value enums + validators, requirement lookup, few-shot | **done** |
 | P3 | Perception client (base64 vision, JSON schema, retry, cache) | **done** |
 | P4 | Deterministic decision engine + history merge | **done** |
-| P5 | Orchestrator (`main.py`): parse→perceive→decide→validate→write | todo |
+| P5 | Orchestrator (`main.py`): parse→perceive→decide→validate→write | **done** |
 | P6 | Evaluation harness (`evaluation/main.py`) + `evaluation_report.md` | todo |
 | P7 | Real run: tune on sample → score → predict test → `output.csv` | todo |
 | P8 | Packaging | todo |

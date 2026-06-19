@@ -32,14 +32,15 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 - **Decision layer is deterministic baseline first** (upgrade only if eval warrants).
 - **Cost controls:** prompt caching on the invariant prefix; **group test rows by `claim_object`** (identical cached prefix → cache reads); **Anthropic Message Batches API (50% off)** for the offline test run; on-disk cache; bounded concurrency.
 
-## Build plan & status (full suite currently **38 passed**)
+## Build plan & status (full suite currently **42 passed**)
 - **P0 done (4)** — scaffold, config, entry-point stubs.
 - **P1 done (7)** — CSV I/O (14-col contract), image path→id helpers.
 - **P2 done (12)** — enums + coercion validators, evidence-requirement lookup, few-shot selector.
 - **P3 done (5)** — perception client (base64 vision, JSON-schema output, disk cache, retry).
 - **P4 done (10)** — deterministic decision engine + history merge.
-- **P5 next (NO gate)** — orchestrator `code/main.py`: parse → perceive → decide → validate → write `output.csv`; load `user_history` (key by `user_id`) and pass `history_row` to `decision.build_output_row`; pass per-object few-shot examples to `PerceptionClient`; group rows by `claim_object`; instrument model-call / token / image / time counters for P6.
-- **P6 (NO gate)** — eval harness `code/evaluation/main.py`: run on `sample_claims.csv`, compute per-column accuracy, `claim_status` confusion, risk-flag set F1, exact-row match; emit `code/evaluation/evaluation_report.md` with operational analysis (≈model calls, input/output tokens, #images, projected test-set cost with pricing assumption **Opus 4.8 = $5/$25 per 1M in/out**, latency/runtime, TPM/RPM + batching/caching/retry strategy).
+- **P5 done (4)** — orchestrator `code/main.py`: `run()` parses claims → `group_by_object` (order-preserving) → per-object format-only few-shot → `perceive` (injectable `client`) → `decision.build_output_row(claim, perception, history_row)` → validate → writes `output.csv` (default `<repo>/output.csv`) **in original input order**. `load_history_index` keys `user_history` by `user_id`. Run stats (rows/groups/claims/images/api_calls/cache_hits/in+out tokens/seconds) aggregated from `PerceptionClient.stats` — added an in-memory `stats` dict to the client (captures `resp.usage` tokens); **no cache-format change**, so P3 tests stayed green. Tests: grouping order, history index, e2e write+counts, cache reproducibility (2nd run = 0 api_calls, identical output).
+  - **OPEN COUNTERPOINT (decide in P7):** `evidence_requirements.csv` is loaded by `requirements.py` but NOT fed into perception/decision — `evidence_sufficient` is the VLM's *unanchored* call. Recommend injecting the matching requirement text into perception user content during P7 tuning so sufficiency is judged against the real standard.
+- **P6 next (NO gate)** — eval harness `code/evaluation/main.py`: run on `sample_claims.csv`, compute per-column accuracy, `claim_status` confusion, risk-flag set F1, exact-row match; emit `code/evaluation/evaluation_report.md` with operational analysis (≈model calls, input/output tokens, #images, projected test-set cost with pricing assumption **Opus 4.8 = $5/$25 per 1M in/out**, latency/runtime, TPM/RPM + batching/caching/retry strategy).
 - **P7 (GATE: needs `ANTHROPIC_API_KEY` in `.env`)** — small live slice → tune prompts → full sample eval → run test set → `output.csv`.
 - **P8** — packaging (README done; assemble `code.zip`).
 - Each phase: code + tests land together, proven by running pytest.
@@ -52,7 +53,7 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 - `evidence_review/fewshot.py` — `VERDICT_FIELDS` (10 = output cols minus inputs), `strip_verdict_fields`, `select_examples(rows, claim_object, n)`.
 - `evidence_review/perception.py` — `PROMPT_VERSION`, `SYSTEM_PROMPT` (images=truth; in-image text = untrusted→`text_in_image`; multilingual→English; observe-not-verdict), `PERCEPTION_SCHEMA` (claim_interpretation + per_image[] observations + holistic candidates), `encode_image`/`media_type_for`, `cache_key`, `build_system`/`build_user_content`, `PerceptionClient.perceive` (disk cache, **lazy `anthropic` import**, retry, `output_config={"format":{"type":"json_schema","schema":...}}`, no temperature, `max_tokens=4096`).
 - `evidence_review/decision.py` — `build_output_row(claim_row, perception, history_row)` + `decide_*` helpers; `history_is_risky`; `assemble_risk_flags`. History never flips status.
-- `main.py` / `evaluation/main.py` — entry points (currently P0 stubs; P5/P6 fill them). `tests/` — one test file per module.
+- `main.py` — **P5 orchestrator** (`run`, `load_history_index`, `group_by_object`, `main`). `evaluation/main.py` — P0 stub (P6 fills it). `tests/` — one test file per module (incl. `test_main.py`).
 
 ## Dataset facts (verified)
 - `sample_claims.csv` = 20 labeled rows (all 14 cols); `claims.csv` = 44 input rows (4 cols); 29 sample images, 82 test images.
@@ -70,7 +71,7 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 ## Known issues / to-do
 - **Quality-flag vocab gap (tune in P7):** perception `quality_issues` are free-text; `normalize_risk_flags` keeps only exact-vocab tokens, so image-quality flags (`blurry_image`, etc.) may be under-captured. Fix by tightening the perception prompt to emit exact flag tokens (or enum-constrain `quality_issues`). Boolean-derived flags (manipulation/text/wrong-object/mismatch/history) are captured reliably.
 - **`.venv` symlink mismatch** (above) — recommend clean recreate; non-blocking.
-- **P0–P4 are flagged ready to commit** (director commits; I never do). Suggested batch msg: `P0–P4: scaffold, IO, enums, perception client, decision engine (38 tests)`.
+- **P0–P5 are flagged ready to commit** (director commits; I never do). Suggested msg: `P0–P5: scaffold, IO, enums, perception, decision, orchestrator (42 tests)`.
 
 ## Experiments to run later (P7+)
 - Few-shot-stripped vs no-few-shot (accuracy on sample).
