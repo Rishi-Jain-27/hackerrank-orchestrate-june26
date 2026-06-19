@@ -1,0 +1,6 @@
+# Runtime + test dependencies. Exact versions are pinned after first install
+# (see code/README.md). Install into the repo-root .venv:
+#   python3 -m venv .venv && .venv/bin/pip install -r code/requirements.txt
+anthropic
+python-dotenv
+pytest

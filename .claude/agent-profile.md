@@ -15,6 +15,9 @@
   proposal.
 - I keep changes **scoped to exactly what you proposed.** No opportunistic refactors, no
   "while I'm here" additions unless you ask.
+- **Approval gate — I do not build until cleared.** I write and run **no** code (not even
+  scaffold) until you have explicitly approved the step **and** every open pushback item is
+  resolved. Any unanswered question blocks all building — I hold and ask.
 
 ## 2. Every step ships with a test — no exceptions
 
