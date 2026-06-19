@@ -29,7 +29,7 @@ writes structured predictions to `output.csv`.
 | Phase | Deliverable | Status |
 |------|-------------|--------|
 | P0 | Scaffold, `.venv`, config loader | **done** |
-| P1 | CSV I/O (14-col order), image path→id resolver | todo |
+| P1 | CSV I/O (14-col order), image path→id resolver | **done** |
 | P2 | Allowed-value enums + validators, requirement lookup, few-shot | todo |
 | P3 | Perception client (base64 vision, JSON schema, retry, cache) | todo |
 | P4 | Deterministic decision engine + history merge | todo |
