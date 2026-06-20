@@ -162,6 +162,7 @@ def render_report(
     test_rows: int | None = None,
     test_images: int | None = None,
     model: str = config.DEFAULT_MODEL,
+    test_actuals: dict | None = None,
 ) -> str:
     """Render the markdown evaluation report (accuracy + operational analysis)."""
     api_calls = run_stats.get("api_calls", 0)
@@ -244,14 +245,39 @@ def render_report(
         )
     L.append("")
 
+    if test_actuals:
+        a_calls = test_actuals.get("api_calls", 0)
+        a_cache = test_actuals.get("cache_hits", 0)
+        a_in = test_actuals.get("input_tokens", 0)
+        a_out = test_actuals.get("output_tokens", 0)
+        a_imgs = test_actuals.get("images", 0)
+        a_rows = test_actuals.get("written", test_actuals.get("rows", "?"))
+        a_secs = test_actuals.get("seconds", 0)
+        a_cost = a_in / 1e6 * PRICE_IN_PER_M + a_out / 1e6 * PRICE_OUT_PER_M
+        L.append("### Actual test-set run (`dataset/claims.csv` → `output.csv`)")
+        L.append("")
+        L.append(
+            f"- **Rows processed:** {a_rows} (1 model call per claim)"
+        )
+        L.append(f"- **Model calls:** {a_calls}  •  cache hits: {a_cache}")
+        L.append(f"- **Images processed:** {a_imgs}")
+        L.append(f"- **Tokens:** input {a_in:,} / output {a_out:,}")
+        L.append(f"- **Runtime:** {a_secs} s")
+        L.append(
+            f"- **Cost:** ${a_cost:.4f} full price; ~${a_cost / 2:.4f} with the "
+            "**Message Batches API** (50% off); ~$0 on a cached re-run."
+        )
+        L.append("")
+
     if test_rows:
         proj_in = per_call_in * test_rows
         proj_out = per_call_out * test_rows
         proj_cost = proj_in / 1e6 * PRICE_IN_PER_M + proj_out / 1e6 * PRICE_OUT_PER_M
-        L.append("### Projected test-set cost")
+        L.append("### Projected test-set cost (from sample averages)")
         L.append("")
         L.append(
-            f"`dataset/claims.csv` = **{test_rows} rows**"
+            f"`dataset/claims.csv` = **{test_rows} rows** → **~{test_rows} model "
+            f"calls** (1/claim)"
             + (f", **{test_images} images**" if test_images is not None else "")
             + f". At {per_call_in:.0f} in / {per_call_out:.0f} out tokens per claim "
             "(sample average):"
@@ -307,10 +333,36 @@ def main() -> int:
 
     metrics, run_stats = run_evaluation(settings, progress=True)
 
+    # The operational section needs real token/cost numbers, which only exist on a
+    # live (cold) run. Persist them then; on a cache-served re-run fall back to the
+    # last persisted numbers so the report stays accurate without re-spending.
+    import json
+
+    sample_stats_path = Path(__file__).resolve().parent / "sample_run_stats.json"
+    if run_stats.get("api_calls", 0) > 0:
+        try:
+            sample_stats_path.write_text(json.dumps(run_stats, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+    elif sample_stats_path.exists():
+        run_stats = json.loads(sample_stats_path.read_text(encoding="utf-8"))
+
     # Test-set sizing for the cost projection.
     test_claim_rows = dataio.read_csv_rows(settings.claims_csv)
     test_images = sum(
         len(dataio.split_image_paths(r.get("image_paths", ""))) for r in test_claim_rows
+    )
+    # Actual test-set telemetry, if main.py has already produced output.csv
+    # (written by main.py beside the default output.csv at the repo root).
+    import json
+
+    stats_path = orchestrator.run_stats_path_for(
+        settings.dataset_dir.parent / "output.csv"
+    )
+    test_actuals = (
+        json.loads(stats_path.read_text(encoding="utf-8"))
+        if stats_path.exists()
+        else None
     )
     report = render_report(
         metrics,
@@ -318,6 +370,7 @@ def main() -> int:
         test_rows=len(test_claim_rows),
         test_images=test_images,
         model=settings.model,
+        test_actuals=test_actuals,
     )
     report_path = Path(__file__).resolve().parent / "evaluation_report.md"
     report_path.write_text(report, encoding="utf-8")

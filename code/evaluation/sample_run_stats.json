@@ -1,0 +1,13 @@
+{
+  "claims": 20,
+  "images": 29,
+  "api_calls": 20,
+  "cache_hits": 0,
+  "input_tokens": 103403,
+  "output_tokens": 10058,
+  "rows": 20,
+  "groups": 3,
+  "seconds": 153.087,
+  "output_path": "code/evaluation/sample_predictions.csv",
+  "written": 20
+}

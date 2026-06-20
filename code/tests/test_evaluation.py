@@ -171,3 +171,28 @@ def test_run_evaluation_and_render_report(tmp_path):
     assert "Operational analysis" in report
     assert "Projected test-set cost" in report
     assert "$" in report
+
+
+def test_render_report_includes_actual_test_run_telemetry():
+    metrics = ev.score_predictions([_gold()], [_gold()])
+    run_stats = {
+        "api_calls": 20, "cache_hits": 0, "images": 29,
+        "input_tokens": 100000, "output_tokens": 10000, "rows": 20, "seconds": 150.0,
+    }
+    actuals = {
+        "api_calls": 44,
+        "cache_hits": 0,
+        "images": 82,
+        "input_tokens": 263284,
+        "output_tokens": 24297,
+        "seconds": 376.5,
+        "written": 44,
+    }
+    report = ev.render_report(
+        metrics, run_stats, test_rows=44, test_images=82, test_actuals=actuals
+    )
+    assert "Actual test-set run" in report
+    assert "Model calls:** 44" in report
+    assert "Images processed:** 82" in report
+    assert "263,284" in report  # actual input tokens rendered
+    assert "376.5 s" in report  # actual runtime rendered

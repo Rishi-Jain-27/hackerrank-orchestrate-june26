@@ -32,7 +32,8 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 - **Decision layer is deterministic baseline first** (upgrade only if eval warrants).
 - **Cost controls:** prompt caching on the invariant prefix; **group test rows by `claim_object`** (identical cached prefix → cache reads); **Anthropic Message Batches API (50% off)** for the offline test run; on-disk cache; bounded concurrency.
 
-## Build plan & status (full suite currently **69 passed**)
+## Build plan & status (full suite currently **70 passed**)
+- **Eval report operational section now covers spec checklist (problem_statement.md §156-161) with ACTUALS for BOTH sample and test.** `main.py` persists run telemetry beside output.csv → `output_run_stats.json` (only on cold runs, api_calls>0, so warm re-runs don't zero it); `evaluation/main.py` persists `code/evaluation/sample_run_stats.json` likewise and falls back to it when a regen is cache-served. `render_report(test_actuals=...)` renders an "Actual test-set run" section. Report shows: sample 20 calls/103k+10k tok/29 img/153s/$0.77; **test 44 calls/263k+24k tok/82 img/376.5s/$1.92 full / $0.96 batched**; projection + TPM-RPM/batching/cache/retry. Persistence lives in `main()` (NOT `run()`) so unit tests don't litter. `run_stats_path_for(output_path)` = `<stem>_run_stats.json` sibling (tmp-safe).
 - **P7 DONE (live), prompt now `p7-5`.** Sample eval + **`output.csv` regenerated & validated** (44 rows, exact 14-col, all enums in-vocab, zero drift; supported 18 / contradicted 16 / NEI 10).
   - **Final sample metrics (`p7-5`):** claim_status **75%**, **issue_type 75%** (was 50%), **severity 60%** (was 48%), **exact-row 35%** (was 15%), object_part 90%, valid_image 90%, evidence_standard_met 75%, risk-flag F1 0.69, supporting_image_ids 65%.
   - **P7+ accuracy rounds (director-driven, all measured):**

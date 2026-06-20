@@ -126,11 +126,36 @@ def run(
     return stats
 
 
+def run_stats_path_for(output_path: Path) -> Path:
+    """Telemetry file written beside output.csv (so test runs to a temp dir never
+    clobber the real submission's stats)."""
+    return output_path.with_name(output_path.stem + "_run_stats.json")
+
+
+def _persist_run_stats(stats: dict, output_path: Path) -> None:
+    """Save the run telemetry so the evaluation report can show ACTUAL test-set
+    operational numbers (calls/tokens/images/runtime), not just a projection.
+
+    Only persisted for a live (cold) run — a cache-served re-run reports 0 tokens,
+    which must not overwrite the real numbers."""
+    import json
+
+    if stats.get("api_calls", 0) <= 0:
+        return
+    try:
+        run_stats_path_for(output_path).write_text(
+            json.dumps(stats, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass  # telemetry is best-effort; never fail the run over it
+
+
 def main() -> int:
     settings = config.get_settings()
     print(f"[orchestrate] model  = {settings.model}")
     print(f"[orchestrate] claims = {settings.claims_csv}")
     stats = run(settings, progress=True)
+    _persist_run_stats(stats, Path(stats["output_path"]))
     print(
         f"[orchestrate] wrote {stats['written']} rows -> {stats['output_path']} "
         f"in {stats['seconds']}s"

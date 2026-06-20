@@ -1,0 +1,13 @@
+{
+  "claims": 44,
+  "images": 82,
+  "api_calls": 44,
+  "cache_hits": 0,
+  "input_tokens": 263284,
+  "output_tokens": 24297,
+  "rows": 44,
+  "groups": 3,
+  "seconds": 376.504,
+  "output_path": "output.csv",
+  "written": 44
+}

@@ -42,9 +42,18 @@ System scored on **20** labeled rows of `dataset/sample_claims.csv` (model `clau
 - **Runtime:** 153.087 s
 - **Sample-set cost:** $0.7685 (@ $5/1M in, $25/1M out)
 
-### Projected test-set cost
+### Actual test-set run (`dataset/claims.csv` → `output.csv`)
 
-`dataset/claims.csv` = **44 rows**, **82 images**. At 5170 in / 503 out tokens per claim (sample average):
+- **Rows processed:** 44 (1 model call per claim)
+- **Model calls:** 44  •  cache hits: 0
+- **Images processed:** 82
+- **Tokens:** input 263,284 / output 24,297
+- **Runtime:** 376.504 s
+- **Cost:** $1.9238 full price; ~$0.9619 with the **Message Batches API** (50% off); ~$0 on a cached re-run.
+
+### Projected test-set cost (from sample averages)
+
+`dataset/claims.csv` = **44 rows** → **~44 model calls** (1/claim), **82 images**. At 5170 in / 503 out tokens per claim (sample average):
 
 - est. tokens: input 227,487 / output 22,128
 - **est. cost: $1.6906** (full price)
