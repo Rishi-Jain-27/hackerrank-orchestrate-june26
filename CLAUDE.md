@@ -32,9 +32,14 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 - **Decision layer is deterministic baseline first** (upgrade only if eval warrants).
 - **Cost controls:** prompt caching on the invariant prefix; **group test rows by `claim_object`** (identical cached prefix → cache reads); **Anthropic Message Batches API (50% off)** for the offline test run; on-disk cache; bounded concurrency.
 
-## Build plan & status (full suite currently **61 passed**)
-- **P7 DONE (live).** Sample eval converged + **`output.csv` produced & validated** (44 rows, exact 14-col contract, all enums in-vocab, zero drift; supported 20 / contradicted 14 / NEI 10).
-  - **Final sample metrics (`prompt p7-3`):** claim_status **75%**, risk-flag F1 **~0.69**, exact-row 15%, supported 12/12, object_part 90%, valid_image 85-90%, evidence_standard_met 80%, severity **50%** (calibrated: 'high' reserved for catastrophic; gold skews medium).
+## Build plan & status (full suite currently **69 passed**)
+- **P7 DONE (live), prompt now `p7-5`.** Sample eval + **`output.csv` regenerated & validated** (44 rows, exact 14-col, all enums in-vocab, zero drift; supported 18 / contradicted 16 / NEI 10).
+  - **Final sample metrics (`p7-5`):** claim_status **75%**, **issue_type 75%** (was 50%), **severity 60%** (was 48%), **exact-row 35%** (was 15%), object_part 90%, valid_image 90%, evidence_standard_met 75%, risk-flag F1 0.69, supporting_image_ids 65%.
+  - **P7+ accuracy rounds (director-driven, all measured):**
+    - `p7-4`: added holistic **`assessment_confidence`** (high/med/low); decision gates contradicted-vs-NEI by confidence (low+nonmatch→NEI), **`possible_manipulation`→NEI override** (non_original stays flag-only — validated: acting on it would break gold-supported user_010), low-conf→manual_review, **retry-on-empty per_image** (fixed user_003 glitch).
+    - `p7-5`: **issue_type/severity vocabulary glossary with "use X (not Y) when…" disambiguation** for confusable tokens (crack/glass_shatter, stain/water_damage, dent/scratch, broken/missing_part, crushed/torn, medium/high). Biggest win: issue_type 50→75% (gold never uses glass_shatter; labels all cracked glass `crack`).
+  - **KEY METHOD FINDING:** on 20 nondeterministic rows (Opus, no temperature), subjective **claim_status is noise-bound ~70-75%** (run-to-run flips ±1-2 rows; adding any prompt field forces a fresh perception run so rule effects can't be isolated). **Objective fields (issue_type, severity) are NOT noise-bound** — consistent errors → measurable fixes. Lever ranking: issue_type/severity (objective, fixable) > claim_status (subjective, noise-bound). supporting_image_ids (65%) skipped — gold semantics inconsistent.
+  - **Original sample metrics (`p7-3`, pre-accuracy-rounds):** claim_status 75%, risk-F1 0.69, exact-row 15%, severity 50%, issue_type 50%.
   - **Tuning applied (all director-approved):** reverted fix B (cross_image_consistent too noisy — was overfit to case_002); conservative risk flags (`decision.GENUINE_RISK_FLAGS` gates manual_review; quality flags only when image unusable; holistic wrong_object/part); prompt `p7-2` (text_in_image only imperative; manipulation/non_original only w/ evidence; quality only when blocking; evidence_sufficient-vs-matches_claim → contradicted-not-NEI); prompt `p7-3` (severity calibration).
   - **Image fixes (perception.py):** content-sniff media type; AVIF/HEIC→PNG; **>10 MiB images downscaled to JPEG** (`_shrink_to_limit`, `MAX_IMAGE_B64_BYTES`). Cache key uses ORIGINAL bytes → reproducible.
   - **Cost (actuals):** sample eval $0.66 (20 calls); test run 30 calls + 14 cache hits, 82 images, 153k in / 16k out, 263s.
@@ -88,7 +93,7 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 ## Known issues / to-do
 - **Quality-flag vocab gap (tune in P7):** perception `quality_issues` are free-text; `normalize_risk_flags` keeps only exact-vocab tokens, so image-quality flags (`blurry_image`, etc.) may be under-captured. Fix by tightening the perception prompt to emit exact flag tokens (or enum-constrain `quality_issues`). Boolean-derived flags (manipulation/text/wrong-object/mismatch/history) are captured reliably.
 - **`.venv` symlink mismatch** (above) — recommend clean recreate; non-blocking.
-- **P0–P6 + P7 (image fixes + tuning) ready to commit** (director commits; I never do). Suggested msg: `P0–P7: pipeline + eval harness + image-format fixes + prompt/decision tuning (59 tests, sample claim_status 75% / risk-F1 0.70)`. New dep: pillow-heif, pillow.
+- **P0–P7 (incl. confidence + glossary accuracy rounds) ready to commit** (director commits; I never do). Suggested msg: `P0–P7: full pipeline + eval harness + image fixes + accuracy tuning (69 tests; sample claim_status 75% / issue_type 75% / severity 60% / exact-row 35%)`. New dep: pillow-heif, pillow.
 
 ## Experiments to run later (P7+)
 - Few-shot-stripped vs no-few-shot (accuracy on sample).

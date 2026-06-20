@@ -21,7 +21,8 @@ def _img(**over):
 
 
 def _perc(matches=True, evidence=True, issue="dent", part="rear_bumper",
-          sev="medium", per_image=None, supporting=("img_1",), cross=True):
+          sev="medium", per_image=None, supporting=("img_1",), cross=True,
+          confidence="high"):
     return {
         "claim_interpretation": {
             "issue_family": "dent or scratch",
@@ -32,6 +33,7 @@ def _perc(matches=True, evidence=True, issue="dent", part="rear_bumper",
         "per_image": [_img()] if per_image is None else per_image,
         "holistic": {
             "cross_image_consistent": cross,
+            "assessment_confidence": confidence,
             "supporting_image_ids": list(supporting),
             "issue_type_candidate": issue,
             "object_part_candidate": part,
@@ -131,6 +133,50 @@ def test_quality_flag_kept_when_image_unusable():
     blocked = [_img(relevant=False, shows_object=False, quality_issues=["blurry_image"])]
     row = decision.build_output_row(CLAIM, _perc(per_image=blocked, evidence=False))
     assert "blurry_image" in row["risk_flags"]
+
+
+def test_low_confidence_nonmatch_is_nei_not_contradicted():
+    # matches_claim=False but the model is unsure -> can't-verify -> NEI.
+    row = decision.build_output_row(
+        CLAIM, _perc(matches=False, evidence=True, confidence="low")
+    )
+    assert row["claim_status"] == "not_enough_information"
+
+
+def test_confident_nonmatch_is_contradicted():
+    row = decision.build_output_row(
+        CLAIM, _perc(matches=False, evidence=True, confidence="high")
+    )
+    assert row["claim_status"] == "contradicted"
+
+
+def test_low_confidence_adds_manual_review():
+    row = decision.build_output_row(
+        CLAIM, _perc(matches=True, evidence=True, confidence="low")
+    )
+    assert row["claim_status"] == "supported"  # confidence does not flip a match
+    assert "manual_review_required" in row["risk_flags"]
+
+
+def test_possible_manipulation_forces_nei():
+    manip = [_img(possible_manipulation=True)]
+    row = decision.build_output_row(
+        CLAIM, _perc(per_image=manip, matches=True, evidence=True)
+    )
+    assert row["claim_status"] == "not_enough_information"
+    assert row["evidence_standard_met"] == "false"
+    assert "possible_manipulation" in row["risk_flags"]
+    assert "manual_review_required" in row["risk_flags"]
+
+
+def test_non_original_alone_does_not_sink_a_match():
+    # non_original is too noisy to act on -> it must NOT flip a supported claim.
+    nonorig = [_img(non_original=True)]
+    row = decision.build_output_row(
+        CLAIM, _perc(per_image=nonorig, matches=True, evidence=True)
+    )
+    assert row["claim_status"] == "supported"
+    assert "non_original_image" in row["risk_flags"]
 
 
 def test_history_adds_risk_but_does_not_flip_status():

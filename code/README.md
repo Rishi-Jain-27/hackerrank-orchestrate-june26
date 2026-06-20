@@ -40,7 +40,7 @@ writes structured predictions to `output.csv`.
 | P4 | Deterministic decision engine + history merge | **done** |
 | P5 | Orchestrator (`main.py`): parse→perceive→decide→validate→write | **done** |
 | P6 | Evaluation harness (`evaluation/main.py`) + `evaluation_report.md` | **done** |
-| P7 | Real run: tune on sample → score → predict test → `output.csv` | todo |
+| P7 | Real run: tune on sample → score → predict test → `output.csv` | **done** |
 | P8 | Packaging | todo |
 
 Every phase ships with tests and is proven by running them.

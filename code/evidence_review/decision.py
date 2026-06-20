@@ -48,10 +48,26 @@ GENUINE_RISK_FLAGS = frozenset(
 )
 
 
+def assessment_confidence(perception: dict) -> str:
+    """The model's self-rated confidence in its verdict-relevant judgments.
+    Defaults to 'high' when absent (older cache / fixtures) so behavior is stable."""
+    c = (_holistic(perception).get("assessment_confidence", "") or "").strip().lower()
+    return c if c in ("high", "medium", "low") else "high"
+
+
+def manipulation_present(perception: dict) -> bool:
+    """True if any submitted image looks manipulated — evidence we cannot trust.
+    (non_original is intentionally excluded: the model over-flags stock-looking
+    images, so acting on it would wrongly sink genuine claims.)"""
+    return any(img.get("possible_manipulation") for img in _per_image(perception))
+
+
 def decide_evidence_met(perception: dict) -> bool:
     # NOTE: cross_image_consistent is intentionally NOT used to gate evidence.
     # Eval showed the model flags any stock/blurry/secondary image as
     # inconsistent; gold resolves multi-image claims by the relevant image.
+    if manipulation_present(perception):
+        return False  # manipulated evidence cannot meet the standard
     return bool(_holistic(perception).get("evidence_sufficient")) and decide_valid_image(
         perception
     )
@@ -61,7 +77,16 @@ def decide_claim_status(perception: dict) -> str:
     """supported / contradicted / not_enough_information — from the images only."""
     if not decide_evidence_met(perception):
         return "not_enough_information"
-    return "supported" if _holistic(perception).get("matches_claim") else "contradicted"
+    if _holistic(perception).get("matches_claim"):
+        return "supported"
+    # A 'contradicted' verdict requires the model to be reasonably sure the image
+    # disproves the claim. When it is unsure (low confidence), it is more likely a
+    # can't-verify case than an active contradiction -> not_enough_information.
+    return (
+        "contradicted"
+        if assessment_confidence(perception) in ("high", "medium")
+        else "not_enough_information"
+    )
 
 
 def decide_issue_type(perception: dict) -> str:
@@ -137,7 +162,11 @@ def assemble_risk_flags(
 
     flags = enums.normalize_risk_flags(candidates)
     present = set() if flags == "none" else set(flags.split(";"))
-    needs_review = bool(present & GENUINE_RISK_FLAGS) or claim_status == "not_enough_information"
+    needs_review = (
+        bool(present & GENUINE_RISK_FLAGS)
+        or claim_status == "not_enough_information"
+        or assessment_confidence(perception) == "low"
+    )
     if needs_review:
         existing = [] if flags == "none" else flags.split(";")
         existing.append("manual_review_required")

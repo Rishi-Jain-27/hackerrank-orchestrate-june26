@@ -25,7 +25,12 @@ from . import config, dataio, enums
 # matches_claim clarity (contradicted-not-NEI) — P7 tuning #3/#4.
 # p7-3: severity calibration — reserve 'high' for catastrophic/total-loss; most
 # visible damage is 'medium' (gold skews medium).
-PROMPT_VERSION = "p7-3"
+# p7-4: model self-rates assessment_confidence (gates contradicted-vs-NEI in the
+# decision layer); empty per_image is retried.
+# p7-5: issue_type/severity vocabulary glossary with "use X not Y when..."
+# disambiguation lines for the confusable tokens (crack/glass_shatter,
+# stain/water_damage, dent/scratch, broken/missing_part, crushed/torn, med/high).
+PROMPT_VERSION = "p7-5"
 
 _MEDIA_TYPES = {
     ".jpg": "image/jpeg",
@@ -61,6 +66,11 @@ SYSTEM_PROMPT = (
     "`evidence_sufficient` true and `matches_claim` false. Set `evidence_sufficient` "
     "false ONLY when the object/part genuinely cannot be assessed. Use the minimum "
     "image-evidence standards in the user message as your bar.\n"
+    "- `assessment_confidence` is how certain you are in your `matches_claim` and "
+    "`evidence_sufficient` judgments: 'high' when the images make it clear, 'medium' "
+    "when there is some ambiguity, 'low' when you are genuinely unsure (e.g. you "
+    "cannot confirm the object's identity, or the evidence is ambiguous). Use 'low' "
+    "rather than guessing.\n"
     "- Judge each image on its own, then across all images; set "
     "`cross_image_consistent` false if they appear to show different physical "
     "objects.\n"
@@ -73,6 +83,38 @@ SYSTEM_PROMPT = (
     "corner, or visible water staining — as 'medium'. Use 'low' only for minor or "
     "superficial cosmetic marks, and 'none' when no damage is present.\n"
     "- All free text you produce must be in English and grounded in the images.\n"
+    "\n"
+    "Vocabulary for `issue_type_candidate` — pick by these definitions, and mind "
+    "the distinctions between similar words:\n"
+    "- `crack`: glass or a screen fractured but still in place, including dense "
+    "spider-web cracks. Use `crack` (NOT `glass_shatter`) whenever the pieces "
+    "remain in place; use `glass_shatter` ONLY when glass is broken into loose or "
+    "separated pieces, or a section is missing.\n"
+    "- `dent`: a surface pushed in or deformed. Use `dent` (NOT `scratch`) when the "
+    "surface is deformed; use `scratch` when it is only scraped or marked with no "
+    "deformation.\n"
+    "- `broken_part`: a component detached, snapped, or non-functional (mirror, "
+    "hinge, light). Use `broken_part` (NOT `dent`/`crack`/`scratch`) when the part "
+    "itself is broken or separated, not merely marked.\n"
+    "- `missing_part`: a claimed component or the package contents are absent. Use "
+    "`missing_part` (NOT `broken_part`) when the item is gone, not present-but-"
+    "damaged.\n"
+    "- `stain`: surface discoloration, residue, or a liquid mark while the item is "
+    "structurally intact (e.g. liquid on a keyboard). Use `stain` (NOT "
+    "`water_damage`) when the material is not soaked or degraded.\n"
+    "- `water_damage`: material visibly soaked, warped, or structurally degraded by "
+    "water (e.g. a soggy package). Use this (NOT `stain`) only for actual water "
+    "damage to the material.\n"
+    "- `crushed_packaging`: a box compressed or deformed but not opened. Use "
+    "`crushed_packaging` (NOT `torn_packaging`) when the box is squashed but intact; "
+    "use `torn_packaging` when a seal, flap, or side is ripped or opened.\n"
+    "- `none`: the claimed part is visible but the claimed damage is absent. "
+    "`unknown`: the issue type cannot be determined from the evidence.\n"
+    "Vocabulary for `severity_estimate`: use `medium` (NOT `high`) for a single "
+    "dent, crack, broken part, crushed corner, or stain — even if visually dramatic "
+    "(a fully cracked screen is still `medium`). Use `high` ONLY when the object is "
+    "structurally destroyed or a total loss. Use `low` for minor or superficial "
+    "marks, and `none` when no damage is present.\n"
     "Return only the structured JSON defined by the schema."
 )
 
@@ -138,6 +180,7 @@ PERCEPTION_SCHEMA: dict = {
                 "severity_estimate",
                 "matches_claim",
                 "evidence_sufficient",
+                "assessment_confidence",
                 "reason",
                 "justification",
             ],
@@ -152,6 +195,10 @@ PERCEPTION_SCHEMA: dict = {
                 "severity_estimate": {"type": "string", "enum": sorted(enums.SEVERITIES)},
                 "matches_claim": {"type": "boolean"},
                 "evidence_sufficient": {"type": "boolean"},
+                "assessment_confidence": {
+                    "type": "string",
+                    "enum": ["high", "medium", "low"],
+                },
                 "reason": {"type": "string"},
                 "justification": {"type": "string"},
             },
@@ -451,12 +498,17 @@ class PerceptionClient:
             claim_row, images, allowed_parts=allowed_parts, requirements_text=req_texts
         )
         result = self._call_model(
-            build_system(self.examples), content, build_schema(claim_object)
+            build_system(self.examples),
+            content,
+            build_schema(claim_object),
+            expect_images=bool(images),
         )
         cache_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
 
-    def _call_model(self, system: str, content: list[dict], schema: dict) -> dict:
+    def _call_model(
+        self, system: str, content: list[dict], schema: dict, expect_images: bool = True
+    ) -> dict:
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             try:
@@ -479,7 +531,12 @@ class PerceptionClient:
                     self.stats["output_tokens"] += (
                         getattr(usage, "output_tokens", 0) or 0
                     )
-                return json.loads(text)
+                parsed = json.loads(text)
+                # A response with no per-image observations (when images were sent)
+                # is degenerate — retry rather than silently forcing NEI downstream.
+                if expect_images and not parsed.get("per_image"):
+                    raise ValueError("model returned empty per_image")
+                return parsed
             except Exception as e:  # transient API/parse errors -> retry
                 last_exc = e
                 if attempt < self.max_retries - 1 and self.retry_delay:

@@ -6,16 +6,16 @@ System scored on **20** labeled rows of `dataset/sample_claims.csv` (model `clau
 
 | field | accuracy | correct / total |
 |---|---|---|
-| `evidence_standard_met` | 80.0% | 16 / 20 |
+| `evidence_standard_met` | 75.0% | 15 / 20 |
 | `risk_flags` | 55.0% | 11 / 20 |
-| `issue_type` | 50.0% | 10 / 20 |
+| `issue_type` | 75.0% | 15 / 20 |
 | `object_part` | 90.0% | 18 / 20 |
 | `claim_status` | 75.0% | 15 / 20 |
-| `supporting_image_ids` | 70.0% | 14 / 20 |
-| `valid_image` | 85.0% | 17 / 20 |
-| `severity` | 50.0% | 10 / 20 |
+| `supporting_image_ids` | 65.0% | 13 / 20 |
+| `valid_image` | 90.0% | 18 / 20 |
+| `severity` | 60.0% | 12 / 20 |
 
-**Exact structured-row match:** 15.0% (3 / 20 rows) — all 8 structured fields correct (`risk_flags`/`supporting_image_ids` compared order-insensitively).
+**Exact structured-row match:** 35.0% (7 / 20 rows) — all 8 structured fields correct (`risk_flags`/`supporting_image_ids` compared order-insensitively).
 
 > Free-text fields `evidence_standard_met_reason` and `claim_status_justification` are not accuracy-scored (no single correct string); they are inspected qualitatively.
 
@@ -23,9 +23,9 @@ System scored on **20** labeled rows of `dataset/sample_claims.csv` (model `clau
 
 | gold ↓ / pred → | contradicted | not_enough_information | supported |
 |---|---|---|---|
-| **contradicted** | 2 | 2 | 1 |
-| **not_enough_information** | 1 | 2 | 0 |
-| **supported** | 0 | 1 | 11 |
+| **contradicted** | 2 | 3 | 0 |
+| **not_enough_information** | 2 | 1 | 0 |
+| **supported** | 0 | 0 | 12 |
 
 `claim_status` accuracy: **75.0%**
 
@@ -36,20 +36,19 @@ System scored on **20** labeled rows of `dataset/sample_claims.csv` (model `clau
 ## Operational analysis
 
 - **Rows processed:** 20 (1 model call per claim)
-- **Model calls (this run):** 0  •  cache hits: 20
+- **Model calls (this run):** 20  •  cache hits: 0
 - **Images sent:** 29
-- **Tokens:** input 0 / output 0
-- **Runtime:** 0.045 s
-- **Sample-set cost:** $0.0000 (@ $5/1M in, $25/1M out)
-  - _No live API calls this run (served from cache or offline). Token/cost figures populate on the first cold-cache live run (P7)._
+- **Tokens:** input 103,403 / output 10,058
+- **Runtime:** 153.087 s
+- **Sample-set cost:** $0.7685 (@ $5/1M in, $25/1M out)
 
 ### Projected test-set cost
 
-`dataset/claims.csv` = **44 rows**, **82 images**. At 0 in / 0 out tokens per claim (sample average):
+`dataset/claims.csv` = **44 rows**, **82 images**. At 5170 in / 503 out tokens per claim (sample average):
 
-- est. tokens: input 0 / output 0
-- **est. cost: $0.0000** (full price)
-- with the **Message Batches API (50% off)**: ~**$0.0000**; prompt-cache reads on the shared per-`claim_object` prefix cut input cost further; re-runs are ~$0 (on-disk cache).
+- est. tokens: input 227,487 / output 22,128
+- **est. cost: $1.6906** (full price)
+- with the **Message Batches API (50% off)**: ~**$0.8453**; prompt-cache reads on the shared per-`claim_object` prefix cut input cost further; re-runs are ~$0 (on-disk cache).
 
 ### Throughput, rate limits & resilience
 

@@ -219,6 +219,33 @@ def test_perceive_parses_and_caches(tmp_path):
     assert fake.messages.calls == 1  # second call did not hit the API
 
 
+def test_system_prompt_has_vocabulary_disambiguation():
+    sysp = perception.build_system()
+    # Confusable-pair guidance must be present (the p7-5 glossary).
+    for token in ("glass_shatter", "crack", "stain", "water_damage", "torn_packaging"):
+        assert token in sysp
+    assert "NOT `glass_shatter`" in sysp  # explicit use-X-not-Y boundary
+    assert "still `medium`" in sysp        # severity high-vs-medium boundary
+
+
+def test_schema_includes_assessment_confidence_enum():
+    h = perception.PERCEPTION_SCHEMA["properties"]["holistic"]
+    assert "assessment_confidence" in h["required"]
+    assert h["properties"]["assessment_confidence"]["enum"] == ["high", "medium", "low"]
+
+
+def test_perceive_retries_on_empty_per_image(tmp_path):
+    rows = dataio.read_csv_rows(config.get_settings().sample_claims_csv)
+    row = rows[0]
+    empty = {**PAYLOAD, "per_image": []}  # degenerate first response
+    fake = _FakeClient([_fake_response(empty), _fake_response(PAYLOAD)])
+    s = config.Settings(cache_dir=tmp_path)
+    pc = perception.PerceptionClient(settings=s, client=fake, max_retries=3)
+    out = pc.perceive(row)
+    assert out["per_image"]  # recovered a non-empty response
+    assert fake.messages.calls == 2  # first empty response was retried
+
+
 def test_perceive_retries_then_succeeds(tmp_path):
     rows = dataio.read_csv_rows(config.get_settings().sample_claims_csv)
     row = rows[1]  # case_002: two images, both present in the dataset
