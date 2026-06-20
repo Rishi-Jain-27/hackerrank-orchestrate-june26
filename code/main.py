@@ -22,6 +22,7 @@ from evidence_review import (  # noqa: E402
     decision,
     fewshot,
     perception,
+    requirements,
 )
 
 
@@ -36,6 +37,17 @@ def group_by_object(rows: list[dict]) -> dict[str, list[tuple[int, dict]]]:
     for idx, row in enumerate(rows):
         groups.setdefault(row.get("claim_object", ""), []).append((idx, row))
     return groups
+
+
+def _print_progress(done: int, total: int, label: str, width: int = 24) -> None:
+    """Render a single-line progress bar to stderr (in-place via carriage return)."""
+    filled = int(width * done / total) if total else width
+    bar = "#" * filled + "-" * (width - filled)
+    sys.stderr.write(f"\r[orchestrate] [{bar}] {done}/{total}  {label:<28}")
+    sys.stderr.flush()
+    if done >= total:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
 
 
 def _empty_stats() -> dict:
@@ -56,11 +68,13 @@ def run(
     output_path: str | Path | None = None,
     client=None,
     fewshot_n: int = 1,
+    progress: bool = False,
 ) -> dict:
     """Run the full pipeline and write output.csv. Returns run statistics.
 
     `client` is injectable so the orchestrator is testable without the SDK or an
     API key (a fake messages client serves canned perception responses).
+    `progress=True` draws a per-claim progress bar on stderr (off by default).
     """
     settings = settings or config.get_settings()
     claims_csv = Path(claims_csv) if claims_csv else settings.claims_csv
@@ -73,24 +87,32 @@ def run(
     claim_rows = dataio.read_csv_rows(claims_csv)
     history = load_history_index(settings.user_history_csv)
     sample_rows = dataio.read_csv_rows(settings.sample_claims_csv)
+    reqs = requirements.load_requirements(settings.evidence_requirements_csv)
     groups = group_by_object(claim_rows)
 
     stats = _empty_stats()
     stats["rows"] = len(claim_rows)
     stats["groups"] = len(groups)
     indexed_rows: list[tuple[int, dict]] = []
+    total = len(claim_rows)
+    done = 0
     started = time.monotonic()
+    if progress:
+        _print_progress(0, total, "starting...")
 
     for claim_object, items in groups.items():
         examples = fewshot.select_examples(sample_rows, claim_object, fewshot_n)
         pc = perception.PerceptionClient(
-            settings=settings, client=client, examples=examples
+            settings=settings, client=client, examples=examples, requirements=reqs
         )
         for idx, claim_row in items:
             perceived = pc.perceive(claim_row)
             history_row = history.get(claim_row.get("user_id", ""))
             out_row = decision.build_output_row(claim_row, perceived, history_row)
             indexed_rows.append((idx, out_row))
+            done += 1
+            if progress:
+                _print_progress(done, total, f"{claim_row.get('user_id', '')} {claim_object}")
         for k in stats:
             if k in pc.stats:
                 stats[k] += pc.stats[k]
@@ -108,7 +130,7 @@ def main() -> int:
     settings = config.get_settings()
     print(f"[orchestrate] model  = {settings.model}")
     print(f"[orchestrate] claims = {settings.claims_csv}")
-    stats = run(settings)
+    stats = run(settings, progress=True)
     print(
         f"[orchestrate] wrote {stats['written']} rows -> {stats['output_path']} "
         f"in {stats['seconds']}s"

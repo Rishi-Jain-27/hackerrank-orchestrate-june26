@@ -127,6 +127,7 @@ def run_evaluation(
     predictions_path: str | Path | None = None,
     client=None,
     fewshot_n: int = 1,
+    progress: bool = False,
 ) -> tuple[dict, dict]:
     """Run the orchestrator on the sample set and score it. Returns (metrics, run_stats)."""
     settings = settings or config.get_settings()
@@ -142,6 +143,7 @@ def run_evaluation(
         output_path=predictions_path,
         client=client,
         fewshot_n=fewshot_n,
+        progress=progress,
     )
     pred_rows = dataio.read_csv_rows(predictions_path)
     gold_rows = dataio.read_csv_rows(sample_csv)
@@ -279,7 +281,15 @@ def render_report(
     L.append(
         "- **Reproducibility:** Opus 4.8 rejects `temperature`; determinism comes from "
         "the on-disk response cache (keyed by prompt-version + model + claim + image "
-        "bytes), so re-scoring is free and identical."
+        "bytes), so re-scoring a cached run is free and byte-identical. A *fresh* "
+        "cold run can differ by a row or two (the model is not perfectly "
+        "deterministic without temperature control); the cache pins the submitted "
+        "`output.csv`."
+    )
+    L.append(
+        "- **Image handling:** media types are content-sniffed (dataset extensions "
+        "lie); AVIF/HEIC are transcoded to PNG and any image over the API's 10 MiB "
+        "cap is downscaled to a JPEG that fits."
     )
     L.append(
         "- **Resilience:** bounded retries with backoff on transient API/parse errors; "
@@ -295,7 +305,7 @@ def main() -> int:
     print(f"[evaluation] model  = {settings.model}")
     print(f"[evaluation] sample = {settings.sample_claims_csv}")
 
-    metrics, run_stats = run_evaluation(settings)
+    metrics, run_stats = run_evaluation(settings, progress=True)
 
     # Test-set sizing for the cost projection.
     test_claim_rows = dataio.read_csv_rows(settings.claims_csv)

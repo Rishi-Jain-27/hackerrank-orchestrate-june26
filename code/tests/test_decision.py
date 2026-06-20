@@ -21,7 +21,7 @@ def _img(**over):
 
 
 def _perc(matches=True, evidence=True, issue="dent", part="rear_bumper",
-          sev="medium", per_image=None, supporting=("img_1",)):
+          sev="medium", per_image=None, supporting=("img_1",), cross=True):
     return {
         "claim_interpretation": {
             "issue_family": "dent or scratch",
@@ -31,7 +31,7 @@ def _perc(matches=True, evidence=True, issue="dent", part="rear_bumper",
         },
         "per_image": [_img()] if per_image is None else per_image,
         "holistic": {
-            "cross_image_consistent": True,
+            "cross_image_consistent": cross,
             "supporting_image_ids": list(supporting),
             "issue_type_candidate": issue,
             "object_part_candidate": part,
@@ -98,6 +98,39 @@ def test_manipulation_text_and_wrong_object_flags():
     assert "wrong_object" in wrong["risk_flags"]
     assert wrong["valid_image"] == "false"  # no usable image
     assert wrong["claim_status"] == "not_enough_information"
+
+
+def test_cross_image_inconsistency_does_not_force_nei():
+    # Reverted P7 fix B: a noisy/secondary inconsistent image must NOT flip a
+    # claim the relevant image supports. Status comes from evidence + matches.
+    two = [_img(image_id="img_1"), _img(image_id="img_2", relevant=False)]
+    row = decision.build_output_row(
+        CLAIM, _perc(matches=True, evidence=True, per_image=two, cross=False)
+    )
+    assert row["claim_status"] == "supported"
+    assert "claim_mismatch" not in row["risk_flags"]
+
+
+def test_clean_supported_has_no_manual_review():
+    # manual_review_required is only added on a genuine risk or NEI, not on every
+    # non-clean row.
+    row = decision.build_output_row(CLAIM, _perc(matches=True, evidence=True))
+    assert row["risk_flags"] == "none"
+
+
+def test_benign_quality_flag_on_usable_image_is_dropped():
+    # A quality issue on an otherwise-usable image is noise -> not surfaced, and
+    # does not trigger manual review.
+    usable = [_img(quality_issues=["low_light_or_glare"])]  # relevant + shows_object
+    row = decision.build_output_row(CLAIM, _perc(per_image=usable, matches=True, evidence=True))
+    assert row["risk_flags"] == "none"
+
+
+def test_quality_flag_kept_when_image_unusable():
+    # When the evidence is not usable, the quality issue that blocked it is kept.
+    blocked = [_img(relevant=False, shows_object=False, quality_issues=["blurry_image"])]
+    row = decision.build_output_row(CLAIM, _perc(per_image=blocked, evidence=False))
+    assert "blurry_image" in row["risk_flags"]
 
 
 def test_history_adds_risk_but_does_not_flip_status():

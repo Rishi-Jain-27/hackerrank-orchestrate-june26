@@ -20,6 +20,11 @@ writes structured predictions to `output.csv`.
   derived from **history** + image quality/authenticity signals.
 - **Few-shot is format-only, selected by `claim_object`** — to teach output
   shape/enum discipline, never to transfer a verdict.
+- **Image media types are content-sniffed, not trusted from the extension.**
+  The dataset ships images whose `.jpg` extension lies (WebP, PNG, AVIF). We
+  detect the real type from magic bytes; AVIF/HEIC (unsupported by the API) are
+  transcoded to PNG at send time via `pillow-heif` (the on-disk cache key uses
+  the original bytes, so reproducibility is preserved).
 - **Cost controls:** prompt caching on the invariant prefix (rows grouped by
   `claim_object`), bounded concurrency, the on-disk cache, and the Anthropic
   **Message Batches API** (50% off) for the offline test run.

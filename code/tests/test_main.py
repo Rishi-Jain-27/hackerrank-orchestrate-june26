@@ -127,6 +127,31 @@ def test_run_writes_valid_output_and_counts(tmp_path):
     assert written[0]["claim_status"] == "supported"
 
 
+def test_progress_bar_writes_to_stderr(tmp_path, capsys):
+    claims = tmp_path / "claims.csv"
+    out = tmp_path / "output.csv"
+    _write_claims(claims)
+    fake = _FakeClient([_fake_response(PAYLOAD), _fake_response(PAYLOAD)])
+    s = config.Settings(cache_dir=tmp_path / "cache")
+
+    stats = main.run(s, claims_csv=claims, output_path=out, client=fake, progress=True)
+
+    captured = capsys.readouterr()
+    assert "2/2" in captured.err  # bar reached completion on stderr
+    assert "[orchestrate]" in captured.err
+    assert captured.out == ""  # nothing leaked to stdout
+    assert stats["written"] == 2  # output unaffected
+
+
+def test_progress_is_silent_by_default(tmp_path, capsys):
+    claims = tmp_path / "claims.csv"
+    _write_claims(claims)
+    fake = _FakeClient([_fake_response(PAYLOAD), _fake_response(PAYLOAD)])
+    s = config.Settings(cache_dir=tmp_path / "cache")
+    main.run(s, claims_csv=claims, output_path=tmp_path / "o.csv", client=fake)
+    assert capsys.readouterr().err == ""  # no bar unless progress=True
+
+
 def test_run_is_reproducible_via_cache(tmp_path):
     claims = tmp_path / "claims.csv"
     out = tmp_path / "output.csv"

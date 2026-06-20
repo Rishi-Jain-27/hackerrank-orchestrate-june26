@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from evidence_review import config, dataio, perception
+from evidence_review import config, dataio, enums, perception
 
 # A schema-shaped perception payload used as the fake model response.
 PAYLOAD = {
@@ -73,8 +73,90 @@ def test_media_type_and_encode_real_image():
     rel = dataio.split_image_paths(row["image_paths"])[0]
     full = s.dataset_dir / rel
     media_type, b64 = perception.encode_image(full)
-    assert media_type == "image/jpeg"
+    # Media type is content-sniffed (dataset extensions lie), and must be one the
+    # Anthropic API accepts.
+    assert media_type in {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    assert media_type == perception.detect_media_type(full.read_bytes(), full)
     assert len(b64) > 100
+
+
+def test_sniff_media_type_from_magic_bytes():
+    assert perception.sniff_media_type(b"\xff\xd8\xff\xe0junk") == "image/jpeg"
+    assert perception.sniff_media_type(b"\x89PNG\r\n\x1a\nxx") == "image/png"
+    assert perception.sniff_media_type(b"GIF89a....") == "image/gif"
+    assert perception.sniff_media_type(b"RIFF????WEBPVP8 ") == "image/webp"
+    assert perception.sniff_media_type(b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00") == "image/avif"
+    assert perception.sniff_media_type(b"not-an-image") is None
+
+
+def test_avif_dataset_image_is_converted_to_png():
+    """The dataset ships AVIF files as .jpg; prepare_image must transcode to PNG."""
+    import pytest
+
+    pytest.importorskip("pillow_heif")
+    s = config.get_settings()
+    avif = s.dataset_dir / "images/test/case_001/img_1.jpg"  # actually AVIF
+    raw = avif.read_bytes()
+    assert perception.detect_media_type(raw, avif) == "image/avif"  # unsupported as-is
+
+    media_type, b64 = perception.prepare_image(raw, avif)
+    assert media_type == "image/png"  # transcoded to a supported type
+    import base64 as _b64
+
+    assert _b64.standard_b64decode(b64)[:8] == b"\x89PNG\r\n\x1a\n"  # valid PNG bytes
+
+
+def test_b64_len_matches_real_encoding():
+    import base64 as _b64
+
+    for raw in (b"", b"a", b"ab", b"abc", b"abcd", b"x" * 1000):
+        assert perception._b64_len(raw) == len(_b64.standard_b64encode(raw))
+
+
+def test_oversized_image_is_downscaled_to_jpeg(monkeypatch):
+    import io
+    import os
+
+    import pytest
+
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    # Random pixels barely compress -> a genuinely large encode that must shrink.
+    big = Image.frombytes("RGB", (2000, 2000), os.urandom(2000 * 2000 * 3))
+    buf = io.BytesIO()
+    big.save(buf, format="PNG")
+    data = buf.getvalue()
+
+    monkeypatch.setattr(perception, "MAX_IMAGE_B64_BYTES", 1_000_000)
+    out = perception._shrink_to_limit(data)
+    assert perception._b64_len(out) <= 1_000_000
+    assert out[:3] == b"\xff\xd8\xff"  # re-encoded as JPEG
+
+
+def test_prepare_image_passes_through_supported_formats():
+    s = config.get_settings()
+    webp = s.dataset_dir / "images/sample/case_002/img_2.jpg"  # actually WebP (supported)
+    media_type, _ = perception.prepare_image(webp.read_bytes(), webp)
+    assert media_type == "image/webp"  # no conversion
+
+
+def test_detect_media_type_prefers_content_over_extension():
+    # Content wins when the extension lies (the case_002 bug: WebP saved as .jpg).
+    assert perception.detect_media_type(b"RIFF????WEBP", "photo.jpg") == "image/webp"
+    # Falls back to the extension when content is unrecognizable.
+    assert perception.detect_media_type(b"\x00\x01\x02", "photo.png") == "image/png"
+
+
+def test_detect_media_type_on_real_mislabeled_dataset_image():
+    # dataset/images/sample/case_002/img_2.jpg is actually a WebP file.
+    s = config.get_settings()
+    full = s.dataset_dir / "images/sample/case_002/img_2.jpg"
+    media_type, _ = perception.encode_image(full)
+    assert media_type == "image/webp"
+    # And the genuinely-jpeg sibling is still detected as jpeg.
+    jpeg = s.dataset_dir / "images/sample/case_002/img_1.jpg"
+    assert perception.encode_image(jpeg)[0] == "image/jpeg"
 
 
 def test_cache_key_is_stable_and_sensitive():
@@ -98,6 +180,30 @@ def test_build_user_content_one_image_block_each():
         for b in blocks
         if b.get("type") == "text"
     )
+
+
+def test_build_user_content_injects_parts_and_standards():
+    blocks = perception.build_user_content(
+        {"claim_object": "car", "user_claim": "dent"},
+        [("img_1", "image/jpeg", "AAAA")],
+        allowed_parts=["rear_bumper", "door", "unknown"],
+        requirements_text=["The claimed car panel should be visible."],
+    )
+    text = "\n".join(b["text"] for b in blocks if b.get("type") == "text")
+    assert "rear_bumper" in text and "door" in text  # allowed object_part tokens
+    assert "The claimed car panel should be visible." in text  # injected standard
+
+
+def test_build_schema_constrains_object_part_and_quality_to_enums():
+    schema = perception.build_schema("laptop")
+    part = schema["properties"]["holistic"]["properties"]["object_part_candidate"]
+    assert set(part["enum"]) == set(enums.object_parts_for("laptop"))
+    quality = schema["properties"]["per_image"]["items"]["properties"]["quality_issues"]
+    assert set(quality["items"]["enum"]) == set(enums.QUALITY_ISSUE_FLAGS)
+    # The module-level schema is untouched (per-object copy).
+    assert perception.PERCEPTION_SCHEMA["properties"]["holistic"]["properties"][
+        "object_part_candidate"
+    ] == {"type": "string"}
 
 
 def test_perceive_parses_and_caches(tmp_path):

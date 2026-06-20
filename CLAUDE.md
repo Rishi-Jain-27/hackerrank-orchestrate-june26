@@ -32,7 +32,23 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 - **Decision layer is deterministic baseline first** (upgrade only if eval warrants).
 - **Cost controls:** prompt caching on the invariant prefix; **group test rows by `claim_object`** (identical cached prefix → cache reads); **Anthropic Message Batches API (50% off)** for the offline test run; on-disk cache; bounded concurrency.
 
-## Build plan & status (full suite currently **46 passed**)
+## Build plan & status (full suite currently **61 passed**)
+- **P7 DONE (live).** Sample eval converged + **`output.csv` produced & validated** (44 rows, exact 14-col contract, all enums in-vocab, zero drift; supported 20 / contradicted 14 / NEI 10).
+  - **Final sample metrics (`prompt p7-3`):** claim_status **75%**, risk-flag F1 **~0.69**, exact-row 15%, supported 12/12, object_part 90%, valid_image 85-90%, evidence_standard_met 80%, severity **50%** (calibrated: 'high' reserved for catastrophic; gold skews medium).
+  - **Tuning applied (all director-approved):** reverted fix B (cross_image_consistent too noisy — was overfit to case_002); conservative risk flags (`decision.GENUINE_RISK_FLAGS` gates manual_review; quality flags only when image unusable; holistic wrong_object/part); prompt `p7-2` (text_in_image only imperative; manipulation/non_original only w/ evidence; quality only when blocking; evidence_sufficient-vs-matches_claim → contradicted-not-NEI); prompt `p7-3` (severity calibration).
+  - **Image fixes (perception.py):** content-sniff media type; AVIF/HEIC→PNG; **>10 MiB images downscaled to JPEG** (`_shrink_to_limit`, `MAX_IMAGE_B64_BYTES`). Cache key uses ORIGINAL bytes → reproducible.
+  - **Cost (actuals):** sample eval $0.66 (20 calls); test run 30 calls + 14 cache hits, 82 images, 153k in / 16k out, 263s.
+  - **Method notes:** decision-only changes re-measure FREE on warm cache; prompt changes need paid cold run. **Run-to-run nondeterminism:** Opus has no temperature → fresh cold runs vary by a row or two; cache pins the submitted output.csv (noted in report).
+  - 5 residual claim_status misses are hard subjective NEI/contradicted/supported boundary cases (user_002/008/032/033/034).
+- **NEXT: P8 packaging** — README done; assemble `code.zip`. Director to commit P0–P7 (61 tests). Optionally one more eval-iteration on issue_type/supporting_image_ids if desired (overfit risk).
+- **Image bugs fixed (perception.py):** dataset `.jpg` files are actually WebP/PNG/AVIF → `sniff_media_type` (magic bytes) + `detect_media_type` (content-authoritative). **8 AVIF imgs** (all test set; sample AVIF-free) unsupported by API → director-approved `pillow-heif==1.4.0`+`pillow==12.2.0` (~8.3 MB); `prepare_image`/`convert_to_png` transcode AVIF/HEIC→PNG (lazy; **cache key uses ORIGINAL bytes** → reproducible).
+- **2-row live slice ran OK** (2 calls, 16s, 4265 in / 947 out tok). Exposed 2 systematic misses → director approved tuning **A+B+C** (now implemented, `PROMPT_VERSION` `p3-1`→`p7-1`):
+  - **A (perception):** `build_schema(claim_object)` hard-constrains `object_part_candidate` (per-object enum) + `quality_issues` (enum `QUALITY_ISSUE_FLAGS`); fixes free-text `object_part`→`unknown` + quality-flag vocab gap.
+  - **B (decision):** `cross_image_mismatch(perception)` (≥2 imgs & `cross_image_consistent` false) → `evidence_met`=False (→ NEI) + `claim_mismatch` + manual_review. Fixes case_002-class miss (perception saw it, engine ignored it).
+  - **C (perception):** `build_user_content` injects per-object allowed `object_part` tokens + `evidence_requirements.csv` standards; `PerceptionClient(requirements=...)`; orchestrator loads reqs + passes them. Resolves the "requirements-not-wired" counterpoint.
+  - Deferred: severity calibration (high vs medium on case_001) — revisit after full-20 eval; not overfitting on n=2.
+- **NEXT LIVE STEP: re-run the 2-row slice** (same Step-1 command; now exercises A/B/C, cache invalidated by version bump) → verify case_002→NEI+claim_mismatch & case_001 object_part→rear_bumper → then **full 20-row sample eval** (`evaluation/main.py` writes the real report) → **test run** (`main.py` → output.csv; AVIF handled).
+
 - **P0 done (4)** — scaffold, config, entry-point stubs.
 - **P1 done (7)** — CSV I/O (14-col contract), image path→id helpers.
 - **P2 done (12)** — enums + coercion validators, evidence-requirement lookup, few-shot selector.
@@ -66,12 +82,13 @@ how I operate: [.claude/agent-profile.md](.claude/agent-profile.md). **Challenge
 - Repo-root `.venv` is **Python 3.14** (homebrew) per `pyvenv.cfg`, with `pytest 9.1.1`, `python-dotenv 1.2.2`, `anthropic 0.111.0` installed in `lib/python3.14/`.
 - ⚠️ **`.venv/bin/python` is a STALE 3.13 symlink** (a mistake from running `python3 -m venv` over the user's venv). **Use `.venv/bin/python3.14` for everything.** Tests: `cd code && ../.venv/bin/python3.14 -m pytest`.
 - Recommended clean fix (director's shell — sandbox blocks network): `rm -rf .venv && /opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv && .venv/bin/pip install anthropic python-dotenv pytest`.
-- Tool sandbox blocks network; the director installs deps in their own shell (method "b"). `.gitignore` covers `.venv`, `.env`, `__pycache__`, `.pytest_cache`, `code/.cache/`.
+- ⚠️ **Network is actually REACHABLE from the tool sandbox** (verified P7: `pip download`/`pip install` succeeded). Earlier "sandbox blocks network" assumption was wrong. Deps now installed directly into `.venv` with director approval. `.gitignore` covers `.venv`, `.env`, `__pycache__`, `.pytest_cache`, `code/.cache/`.
+- **Installed (P7):** `pillow-heif==1.4.0` + `pillow==12.2.0` for AVIF/HEIC→PNG transcode. `register_heif_opener()` decodes AVIF in 1.4.0 (no separate `register_avif_opener`).
 
 ## Known issues / to-do
 - **Quality-flag vocab gap (tune in P7):** perception `quality_issues` are free-text; `normalize_risk_flags` keeps only exact-vocab tokens, so image-quality flags (`blurry_image`, etc.) may be under-captured. Fix by tightening the perception prompt to emit exact flag tokens (or enum-constrain `quality_issues`). Boolean-derived flags (manipulation/text/wrong-object/mismatch/history) are captured reliably.
 - **`.venv` symlink mismatch** (above) — recommend clean recreate; non-blocking.
-- **P0–P6 are flagged ready to commit** (director commits; I never do). Suggested msg: `P0–P6: scaffold, IO, enums, perception, decision, orchestrator, eval harness (46 tests)`.
+- **P0–P6 + P7 (image fixes + tuning) ready to commit** (director commits; I never do). Suggested msg: `P0–P7: pipeline + eval harness + image-format fixes + prompt/decision tuning (59 tests, sample claim_status 75% / risk-F1 0.70)`. New dep: pillow-heif, pillow.
 
 ## Experiments to run later (P7+)
 - Few-shot-stripped vs no-few-shot (accuracy on sample).

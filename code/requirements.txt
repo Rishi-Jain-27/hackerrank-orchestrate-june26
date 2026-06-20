@@ -4,3 +4,8 @@
 anthropic
 python-dotenv
 pytest
+# AVIF/HEIC decode: dataset ships AVIF images saved with .jpg extensions that the
+# Anthropic API cannot accept; pillow-heif transcodes them to PNG at send time
+# (pulls Pillow). See code/README.md.
+pillow-heif==1.4.0
+pillow==12.2.0

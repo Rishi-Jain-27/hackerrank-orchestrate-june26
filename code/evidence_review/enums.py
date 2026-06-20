@@ -52,6 +52,13 @@ RISK_FLAGS: frozenset[str] = frozenset(
     }
 )
 
+# Image-quality risk flags the perception step may emit in `quality_issues`
+# (a subset of RISK_FLAGS). Constraining the model to these exact tokens closes
+# the free-text vocab gap so normalize_risk_flags keeps them.
+QUALITY_ISSUE_FLAGS: frozenset[str] = frozenset(
+    {"blurry_image", "cropped_or_obstructed", "low_light_or_glare", "wrong_angle"}
+)
+
 OBJECT_PARTS: dict[str, frozenset[str]] = {
     "car": frozenset(
         {

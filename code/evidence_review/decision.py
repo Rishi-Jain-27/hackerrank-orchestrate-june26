@@ -33,7 +33,25 @@ def decide_valid_image(perception: dict) -> bool:
     )
 
 
+# Risk flags strong enough to warrant a manual review. Benign quality flags and
+# damage_not_visible do NOT, on their own, trigger manual_review_required.
+GENUINE_RISK_FLAGS = frozenset(
+    {
+        "possible_manipulation",
+        "non_original_image",
+        "text_instruction_present",
+        "wrong_object",
+        "wrong_object_part",
+        "claim_mismatch",
+        "user_history_risk",
+    }
+)
+
+
 def decide_evidence_met(perception: dict) -> bool:
+    # NOTE: cross_image_consistent is intentionally NOT used to gate evidence.
+    # Eval showed the model flags any stock/blurry/secondary image as
+    # inconsistent; gold resolves multi-image claims by the relevant image.
     return bool(_holistic(perception).get("evidence_sufficient")) and decide_valid_image(
         perception
     )
@@ -77,25 +95,38 @@ def decide_supporting_image_ids(perception: dict, claim_row: dict) -> str:
 def assemble_risk_flags(
     perception: dict, claim_status: str, evidence_met: bool, history_row: dict | None
 ) -> str:
-    """Build the risk_flags string from image quality/authenticity, claim mismatch,
-    and history. Adds manual_review_required whenever the case is not a clean
-    supported-with-no-concerns."""
+    """Build the risk_flags string from image authenticity, claim mismatch, and
+    history. Conservative: image-quality flags are kept only when the evidence is
+    actually unusable; wrong_object(_part) is judged holistically (not per noise
+    image); manual_review_required is added only on a genuine risk or NEI."""
     candidates: list[str] = []
     any_issue_visible = False
-    for img in _per_image(perception):
-        candidates.extend(img.get("quality_issues", []) or [])
+    shows_object_any = False
+    shows_part_any = False
+    valid_image = decide_valid_image(perception)
+    images = _per_image(perception)
+    for img in images:
+        if img.get("shows_object"):
+            shows_object_any = True
+        if img.get("shows_relevant_part"):
+            shows_part_any = True
         if img.get("possible_manipulation"):
             candidates.append("possible_manipulation")
         if img.get("non_original"):
             candidates.append("non_original_image")
         if img.get("text_in_image"):
             candidates.append("text_instruction_present")
-        if not img.get("shows_object"):
-            candidates.append("wrong_object")
-        elif not img.get("shows_relevant_part"):
-            candidates.append("wrong_object_part")
         if img.get("issue_visible"):
             any_issue_visible = True
+        # Quality flags matter only when they actually blocked assessment.
+        if not valid_image:
+            candidates.extend(img.get("quality_issues", []) or [])
+
+    # Object/part visibility judged across the whole image set, not per image.
+    if images and not shows_object_any:
+        candidates.append("wrong_object")
+    elif shows_object_any and not shows_part_any:
+        candidates.append("wrong_object_part")
 
     if evidence_met and not _holistic(perception).get("matches_claim"):
         candidates.append("claim_mismatch")
@@ -105,7 +136,8 @@ def assemble_risk_flags(
         candidates.append("user_history_risk")
 
     flags = enums.normalize_risk_flags(candidates)
-    needs_review = flags != "none" or claim_status != "supported" or not evidence_met
+    present = set() if flags == "none" else set(flags.split(";"))
+    needs_review = bool(present & GENUINE_RISK_FLAGS) or claim_status == "not_enough_information"
     if needs_review:
         existing = [] if flags == "none" else flags.split(";")
         existing.append("manual_review_required")
